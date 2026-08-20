@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Bryves TV Admin</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#080808;color:#fff;font-family:Arial,sans-serif}
+    header{height:64px;background:#111;border-bottom:1px solid #242424;display:flex;align-items:center;justify-content:space-between;padding:0 18px}
+    .brand{display:flex;align-items:center;gap:10px;font-weight:800}.logo{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#fff,#c9a227);color:#111;display:grid;place-items:center}
+    main{max-width:850px;margin:auto;padding:20px 14px 50px}.card{background:#111;border:1px solid #252525;border-radius:14px;padding:20px;margin-bottom:16px}
+    h2{font-size:18px;margin:0 0 16px}label{display:block;color:#aaa;font-size:13px;margin:0 0 7px}
+    input,textarea{width:100%;background:#080808;color:#fff;border:1px solid #333;border-radius:8px;padding:12px;margin-bottom:15px;outline:none}
+    textarea{min-height:90px}button{border:0;border-radius:8px;padding:12px 16px;cursor:pointer;font-weight:700}
+    .gold{background:#c9a227;color:#080808}.dark{background:#292929;color:#fff}.status{background:#191919;border-radius:8px;padding:13px;margin-bottom:15px;color:#aaa}
+    .live{color:#29d477}.result{display:none;margin-top:18px}.row{background:#080808;border:1px solid #292929;border-radius:8px;padding:12px;margin-top:8px}
+    .label{font-size:11px;color:#777;margin-bottom:5px}.value{word-break:break-all;font-family:monospace;font-size:13px}.copy{margin-top:8px;padding:7px 10px;background:#292929;color:#fff;font-size:11px}
+    .hint{color:#777;font-size:12px;line-height:1.5;margin-top:10px}
+  </style>
+</head>
+<body>
+<header><div class="brand"><div class="logo">B</div><span>Bryves TV Admin</span></div><span>LIVE CONTROL</span></header>
+<main>
+  <div class="card" id="loginCard">
+    <h2>Admin Login</h2>
+    <label>Password</label><input id="password" type="password" placeholder="Admin password">
+    <button class="gold" id="login">LOGIN</button>
+  </div>
+
+  <div id="panel" style="display:none">
+    <div class="card">
+      <h2>Channel Settings</h2>
+      <label>TV Name</label><input id="channelTitle" value="Bryves TV">
+      <label>Description</label><textarea id="channelDescription">Welcome to Bryves TV.</textarea>
+      <button class="gold" id="save">SAVE SETTINGS</button>
+    </div>
+
+    <div class="card">
+      <h2>Mux Live Stream</h2>
+      <div id="status" class="status">No stream loaded.</div>
+      <button class="gold" id="create">CREATE NEW LIVE STREAM</button>
+      <button class="dark" id="check" style="margin-left:8px">CHECK STATUS</button>
+      <div id="result" class="result">
+        <div class="row"><div class="label">Live Stream ID</div><div id="streamId" class="value"></div></div>
+        <div class="row"><div class="label">RTMPS Server</div><div id="rtmps" class="value">rtmps://global-live.mux.com:443/app</div><button class="copy" onclick="copyId('rtmps')">COPY</button></div>
+        <div class="row"><div class="label">Stream Key</div><div id="streamKey" class="value"></div><button class="copy" onclick="copyId('streamKey')">COPY</button></div>
+        <div class="row"><div class="label">Playback ID (automatic)</div><div id="playbackId" class="value"></div></div>
+        <div class="row"><div class="label">Playback URL</div><div id="playbackUrl" class="value"></div></div>
+        <div class="hint">Keep the Stream Key private. The Playback ID is for viewers.</div>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+  let password=sessionStorage.getItem("bryves_admin_password")||"";
+  const $=id=>document.getElementById(id);
+
+  async function api(url,options={}){
+    const r=await fetch(url,{...options,headers:{...(options.headers||{}),"Content-Type":"application/json","x-admin-password":password}});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.error||"Request failed");
+    return d;
+  }
+
+  function openPanel(){
+    $("loginCard").style.display="none";$("panel").style.display="block";
+    loadChannel();loadStatus();
+  }
+
+  $("login").onclick=async()=>{
+    password=$("password").value.trim();
+    if(!password)return alert("Enter password.");
+    try{await api("/api/channel");sessionStorage.setItem("bryves_admin_password",password);openPanel();}
+    catch(e){password="";alert("Wrong admin password.");}
+  };
+
+  async function loadChannel(){
+    try{
+      const d=await api("/api/channel"),c=d.config||{};
+      $("channelTitle").value=c.title||"Bryves TV";
+      $("channelDescription").value=c.description||"Welcome to Bryves TV.";
+    }catch(e){}
+  }
+
+  $("save").onclick=async()=>{
+    try{
+      await api("/api/channel",{method:"PATCH",body:JSON.stringify({
+        title:$("channelTitle").value,description:$("channelDescription").value
+      })});
+      alert("Saved.");
+    }catch(e){alert(e.message);}
+  };
+
+  $("create").onclick=async()=>{
+    $("create").disabled=true;$("create").textContent="CREATING...";
+    try{
+      const d=await api("/api/live-stream/create",{method:"POST",body:JSON.stringify({
+        title:$("channelTitle").value,description:$("channelDescription").value
+      })});
+      show(d.data);$("status").textContent="Created — status: "+d.data.status;
+    }catch(e){alert(e.message);}
+    finally{$("create").disabled=false;$("create").textContent="CREATE NEW LIVE STREAM";}
+  };
+
+  $("check").onclick=loadStatus;
+
+  async function loadStatus(){
+    try{
+      const d=await api("/api/live-stream/status");
+      $("status").textContent=(d.live?"● LIVE — ":"OFFLINE — ")+d.status;
+      $("status").className="status"+(d.live?" live":"");
+      show({
+        id:d.liveStreamId,streamKey:d.streamKey,playbackId:d.playbackId,
+        playbackUrl:d.playbackId?`https://stream.mux.com/${d.playbackId}.m3u8`:"",
+        rtmpsUrl:"rtmps://global-live.mux.com:443/app"
+      });
+    }catch(e){$("status").textContent=e.message;}
+  }
+
+  function show(d){
+    $("result").style.display="block";
+    $("streamId").textContent=d.id||"";
+    $("streamKey").textContent=d.streamKey||"";
+    $("playbackId").textContent=d.playbackId||"";
+    $("playbackUrl").textContent=d.playbackUrl||"";
+    $("rtmps").textContent=d.rtmpsUrl||"rtmps://global-live.mux.com:443/app";
+  }
+
+  window.copyId=async id=>{
+    try{await navigator.clipboard.writeText($(id).textContent);alert("Copied.");}
+    catch{alert("Copy manually.");}
+  };
+
+  if(password)openPanel();
+</script>
+</body>
+</html>
